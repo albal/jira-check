@@ -142,11 +142,9 @@ jobs:
               fi
               
               result="$http_code|$status"
-              TICKET_CACHE[$ticket_id]="$result"
               echo "$result"
             else
               result="$http_code|"
-              TICKET_CACHE[$ticket_id]="$result"
               echo "$result"
             fi
           }
@@ -189,6 +187,9 @@ jobs:
               [ -z "$ticket" ] && continue
               
               result=$(check_jira_ticket "$ticket")
+              # Cache the result
+              TICKET_CACHE[$ticket]="$result"
+              
               http_code=$(echo "$result" | cut -d'|' -f1)
               status=$(echo "$result" | cut -d'|' -f2-)
               
