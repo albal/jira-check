@@ -102,6 +102,15 @@ jobs:
             
             if [ "$http_code" = "200" ]; then
               status=$(echo "$body" | grep -o '"status":{[^}]*"name":"[^"]*"' | grep -o '"name":"[^"]*"' | cut -d'"' -f4)
+              echo "   🔍 DEBUG: Extracted status: '$status'" >&2
+              
+              if [ -z "$status" ]; then
+                echo "   🔍 DEBUG: Status is empty, trying alternative parsing" >&2
+                # Try alternative JSON parsing
+                status=$(echo "$body" | grep -o '"status":{"[^}]*"name":"[^"]*"' | sed 's/.*"name":"\([^"]*\)".*/\1/')
+                echo "   🔍 DEBUG: Alternative status: '$status'" >&2
+              fi
+              
               echo "$http_code|$status"
             else
               echo "$http_code|"
@@ -166,7 +175,14 @@ jobs:
                 commit_valid=false
                 INVALID_COMMITS+=("$short_hash: Ticket $ticket does not exist")
               elif [ "$http_code" = "200" ]; then
-                if is_valid_status "$status"; then
+                echo "   🔍 DEBUG: Checking status validity: '$status'" >&2
+                if [ -z "$status" ]; then
+                  echo "   ❌ Could not extract status from Jira response"
+                  echo "   ℹ️  This might be a JSON parsing issue"
+                  HAS_ERRORS=true
+                  commit_valid=false
+                  INVALID_COMMITS+=("$short_hash: Could not parse status for ticket $ticket")
+                elif is_valid_status "$status"; then
                   echo "   ✅ Ticket $ticket is valid (Status: $status)"
                   echo "   🔗 ${JIRA_BASE_URL%/}/browse/$ticket"
                 else
