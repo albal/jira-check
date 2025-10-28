@@ -94,7 +94,7 @@ jobs:
             local url="$base_url/rest/api/3/issue/$ticket_id"
             
             # Debug output
-            echo "   🔍 DEBUG: Calling $url" >&2
+            debug_log "   🔍 DEBUG: Calling $url"
             
             response=$(curl -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" -s -S -w "\n%{http_code}" --max-time 10 \
               -H "Accept: application/json" \
@@ -103,17 +103,17 @@ jobs:
             curl_exit=$?
             
             # Debug: show curl exit code
-            echo "   🔍 DEBUG: curl exit code: $curl_exit" >&2
+            debug_log "   🔍 DEBUG: curl exit code: $curl_exit"
             
             http_code=$(echo "$response" | tail -n1)
             body=$(echo "$response" | sed '$d')
             
-            echo "   🔍 DEBUG: HTTP code: $http_code" >&2
+            debug_log "   🔍 DEBUG: HTTP code: $http_code"
             
             # Check if http_code is a valid number
             if ! [[ "$http_code" =~ ^[0-9]+$ ]]; then
               # If not a number, it's likely a curl error
-              echo "   🔍 DEBUG: Not a valid HTTP code, returning error" >&2
+              debug_log "   🔍 DEBUG: Not a valid HTTP code, returning error"
               echo "error|Connection failed: $response"
               return
             fi
