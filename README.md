@@ -36,9 +36,10 @@ Add the following to your repository (Settings → Secrets and variables → Act
   - The action will automatically add `https://` if not provided
   - Trailing slashes are automatically removed
 - `JIRA_EMAIL`: Email address for Jira API authentication
+- `ACTION_DEBUG` (optional): Set to `true` to enable debug logging (shows curl details, API responses, extracted status, etc.). Default is disabled (unset or `false`).
 
 **Secrets** (Settings → Secrets and variables → Actions → Secrets tab):
-- `JIRA_API_TOKEN`: Jira API token created above
+- `JIRA_API_TOKEN`: Jira API token created above- `JIRA_API_TOKEN`: Jira API token created above
 
 ### 3. Add the Workflow File
 

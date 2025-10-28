@@ -18,9 +18,23 @@ jobs:
           JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
           JIRA_EMAIL: ${{ vars.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          ACTION_DEBUG: ${{ vars.ACTION_DEBUG }}
         run: |
           #!/bin/bash
           set -e
+          
+          # Check if debug is enabled (any value except "false" or empty)
+          DEBUG_ENABLED=false
+          if [ -n "$ACTION_DEBUG" ] && [ "$ACTION_DEBUG" != "false" ]; then
+            DEBUG_ENABLED=true
+          fi
+          
+          # Debug output helper function
+          debug_log() {
+            if [ "$DEBUG_ENABLED" = true ]; then
+              echo "$@" >&2
+            fi
+          }
           
           echo "🔍 Checking Jira tickets in PR commits..."
           echo ""
@@ -103,10 +117,10 @@ jobs:
             if [ "$http_code" = "200" ]; then
               # Extract status using jq (more reliable than grep)
               status=$(echo "$body" | jq -r '.fields.status.name' 2>/dev/null)
-              echo "   🔍 DEBUG: Extracted status: '$status'" >&2
+              debug_log "   🔍 DEBUG: Extracted status: '$status'"
               
               if [ -z "$status" ] || [ "$status" = "null" ]; then
-                echo "   🔍 DEBUG: Status is empty or null" >&2
+                debug_log "   🔍 DEBUG: Status is empty or null"
                 status=""
               fi
               
@@ -174,7 +188,7 @@ jobs:
                 commit_valid=false
                 INVALID_COMMITS+=("$short_hash: Ticket $ticket does not exist")
               elif [ "$http_code" = "200" ]; then
-                echo "   🔍 DEBUG: Checking status validity: '$status'" >&2
+                debug_log "   🔍 DEBUG: Checking status validity: '$status'"
                 if [ -z "$status" ]; then
                   echo "   ❌ Could not extract status from Jira response"
                   echo "   ℹ️  This might be a JSON parsing issue"
