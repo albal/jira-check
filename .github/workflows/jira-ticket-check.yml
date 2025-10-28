@@ -101,14 +101,13 @@ jobs:
             fi
             
             if [ "$http_code" = "200" ]; then
-              status=$(echo "$body" | grep -o '"status":{[^}]*"name":"[^"]*"' | grep -o '"name":"[^"]*"' | cut -d'"' -f4)
+              # Extract status using jq (more reliable than grep)
+              status=$(echo "$body" | jq -r '.fields.status.name' 2>/dev/null)
               echo "   🔍 DEBUG: Extracted status: '$status'" >&2
               
-              if [ -z "$status" ]; then
-                echo "   🔍 DEBUG: Status is empty, trying alternative parsing" >&2
-                # Try alternative JSON parsing
-                status=$(echo "$body" | grep -o '"status":{"[^}]*"name":"[^"]*"' | sed 's/.*"name":"\([^"]*\)".*/\1/')
-                echo "   🔍 DEBUG: Alternative status: '$status'" >&2
+              if [ -z "$status" ] || [ "$status" = "null" ]; then
+                echo "   🔍 DEBUG: Status is empty or null" >&2
+                status=""
               fi
               
               echo "$http_code|$status"
