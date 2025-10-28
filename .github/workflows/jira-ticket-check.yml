@@ -25,9 +25,13 @@ jobs:
           
           # Check if debug is enabled (any value except "false" or empty)
           DEBUG_ENABLED=false
-          if [ -n "$ACTION_DEBUG" ] && [ "$ACTION_DEBUG" != "false" ]; then
+          if [ -n "$ACTION_DEBUG" ] && [ "$ACTION_DEBUG" != "false" ] && [ "$ACTION_DEBUG" != "False" ] && [ "$ACTION_DEBUG" != "FALSE" ]; then
             DEBUG_ENABLED=true
+            echo "🐛 Debug mode: ENABLED (ACTION_DEBUG='$ACTION_DEBUG')"
+          else
+            echo "🐛 Debug mode: DISABLED"
           fi
+          echo ""
           
           # Debug output helper function
           debug_log() {
