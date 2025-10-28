@@ -1,0 +1,164 @@
+name: Jira Ticket Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  check-jira-tickets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history to access all commits
+
+      - name: Check Jira tickets in commits
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          #!/bin/bash
+          set -e
+          
+          echo "🔍 Checking Jira tickets in PR commits..."
+          echo ""
+          echo "📋 Ticket Pattern: [A-Z]+-[0-9]+"
+          echo "✅ Valid Statuses: In Progress, In Development, In Review, Done, Closed, Resolved"
+          echo ""
+          
+          # Check if Jira credentials are set
+          if [ -z "$JIRA_BASE_URL" ] || [ -z "$JIRA_EMAIL" ] || [ -z "$JIRA_API_TOKEN" ]; then
+            echo "❌ Error: Jira credentials not configured"
+            echo "Please set JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN secrets"
+            exit 1
+          fi
+          
+          # Get the base branch
+          BASE_SHA=$(git merge-base origin/${{ github.base_ref }} HEAD)
+          
+          # Get all commits in the PR
+          COMMITS=$(git log $BASE_SHA..HEAD --pretty=format:"%H|%s")
+          
+          if [ -z "$COMMITS" ]; then
+            echo "⚠️  No commits found in this PR"
+            exit 1
+          fi
+          
+          COMMIT_COUNT=$(echo "$COMMITS" | wc -l)
+          echo "Found $COMMIT_COUNT commit(s) to check"
+          echo ""
+          
+          HAS_ERRORS=false
+          INVALID_COMMITS=()
+          
+          # Function to check Jira ticket status
+          check_jira_ticket() {
+            local ticket_id=$1
+            local auth=$(echo -n "$JIRA_EMAIL:$JIRA_API_TOKEN" | base64)
+            
+            response=$(curl -s -w "\n%{http_code}" \
+              -H "Authorization: Basic $auth" \
+              -H "Accept: application/json" \
+              "$JIRA_BASE_URL/rest/api/3/issue/$ticket_id")
+            
+            http_code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | sed '$d')
+            
+            if [ "$http_code" = "200" ]; then
+              status=$(echo "$body" | grep -o '"status":{[^}]*"name":"[^"]*"' | grep -o '"name":"[^"]*"' | cut -d'"' -f4)
+              echo "$http_code|$status"
+            else
+              echo "$http_code|"
+            fi
+          }
+          
+          # Function to check if status is valid
+          is_valid_status() {
+            local status=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+            case "$status" in
+              "in progress"|"in development"|"in review"|"done"|"closed"|"resolved")
+                return 0
+                ;;
+              *)
+                return 1
+                ;;
+            esac
+          }
+          
+          # Process each commit
+          while IFS='|' read -r commit_hash commit_msg; do
+            short_hash=${commit_hash:0:7}
+            echo "📝 Commit $short_hash: $commit_msg"
+            
+            # Extract Jira ticket IDs (pattern: AAAA-NNNN)
+            tickets=$(echo "$commit_msg" | grep -oE '[A-Z]+-[0-9]+' | sort -u)
+            
+            if [ -z "$tickets" ]; then
+              echo "   ❌ No Jira ticket found in commit message"
+              echo ""
+              HAS_ERRORS=true
+              INVALID_COMMITS+=("$short_hash: No Jira ticket found")
+              continue
+            fi
+            
+            echo "   🎫 Found ticket(s): $(echo $tickets | tr '\n' ' ')"
+            
+            commit_valid=true
+            
+            # Check each ticket
+            while IFS= read -r ticket; do
+              [ -z "$ticket" ] && continue
+              
+              result=$(check_jira_ticket "$ticket")
+              http_code=$(echo "$result" | cut -d'|' -f1)
+              status=$(echo "$result" | cut -d'|' -f2)
+              
+              if [ "$http_code" = "404" ]; then
+                echo "   ❌ Ticket $ticket does not exist"
+                HAS_ERRORS=true
+                commit_valid=false
+                INVALID_COMMITS+=("$short_hash: Ticket $ticket does not exist")
+              elif [ "$http_code" = "200" ]; then
+                if is_valid_status "$status"; then
+                  echo "   ✅ Ticket $ticket is valid (Status: $status)"
+                  echo "   🔗 $JIRA_BASE_URL/browse/$ticket"
+                else
+                  echo "   ❌ Ticket $ticket has invalid status: $status"
+                  echo "   🔗 $JIRA_BASE_URL/browse/$ticket"
+                  HAS_ERRORS=true
+                  commit_valid=false
+                  INVALID_COMMITS+=("$short_hash: Ticket $ticket has invalid status: $status")
+                fi
+              else
+                echo "   ❌ Error checking ticket $ticket: HTTP $http_code"
+                HAS_ERRORS=true
+                commit_valid=false
+                INVALID_COMMITS+=("$short_hash: Error checking ticket $ticket")
+              fi
+            done <<< "$tickets"
+            
+            echo ""
+          done <<< "$COMMITS"
+          
+          # Summary
+          echo "============================================================"
+          echo "📊 SUMMARY"
+          echo "============================================================"
+          echo ""
+          
+          if [ "$HAS_ERRORS" = true ]; then
+            echo "❌ PR validation FAILED"
+            echo ""
+            echo "Invalid commits:"
+            for item in "${INVALID_COMMITS[@]}"; do
+              echo "  - $item"
+            done
+            echo ""
+            exit 1
+          else
+            echo "✅ All commits have valid Jira tickets!"
+            echo ""
+            exit 0
+          fi
