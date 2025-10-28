@@ -15,8 +15,8 @@ jobs:
 
       - name: Check Jira tickets in commits
         env:
-          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
-          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ vars.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
         run: |
           #!/bin/bash
@@ -67,6 +67,12 @@ jobs:
             
             # Remove trailing slash from JIRA_BASE_URL if present
             local base_url="${JIRA_BASE_URL%/}"
+            
+            # Add https:// if no protocol is specified
+            if [[ ! "$base_url" =~ ^https?:// ]]; then
+              base_url="https://$base_url"
+            fi
+            
             local url="$base_url/rest/api/3/issue/$ticket_id"
             
             # Debug output
