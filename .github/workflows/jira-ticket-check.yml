@@ -78,9 +78,22 @@ jobs:
           HAS_ERRORS=false
           INVALID_COMMITS=()
           
+          # Associative array to cache ticket checks (ticket_id -> "http_code|status")
+          declare -A TICKET_CACHE
+          
           # Function to check Jira ticket status
           check_jira_ticket() {
             local ticket_id=$1
+            
+            # Check cache first
+            if [ -n "${TICKET_CACHE[$ticket_id]}" ]; then
+              debug_log "   🔍 DEBUG: Using cached result for $ticket_id"
+              echo "${TICKET_CACHE[$ticket_id]}"
+              return
+            fi
+            
+            debug_log "   🔍 DEBUG: Fetching $ticket_id from Jira API"
+            
             local auth=$(echo -n "$JIRA_EMAIL:$JIRA_API_TOKEN" | base64)
             
             # Remove trailing slash from JIRA_BASE_URL if present
@@ -128,9 +141,13 @@ jobs:
                 status=""
               fi
               
-              echo "$http_code|$status"
+              result="$http_code|$status"
+              TICKET_CACHE[$ticket_id]="$result"
+              echo "$result"
             else
-              echo "$http_code|"
+              result="$http_code|"
+              TICKET_CACHE[$ticket_id]="$result"
+              echo "$result"
             fi
           }
           
@@ -225,6 +242,10 @@ jobs:
           echo "============================================================"
           echo "📊 SUMMARY"
           echo "============================================================"
+          echo ""
+          
+          echo "Total commits checked: $COMMIT_COUNT"
+          echo "Unique Jira tickets checked: ${#TICKET_CACHE[@]}"
           echo ""
           
           if [ "$HAS_ERRORS" = true ]; then
