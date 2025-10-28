@@ -38,8 +38,8 @@ jobs:
           # Get the base branch
           BASE_SHA=$(git merge-base origin/${{ github.base_ref }} HEAD)
           
-          # Get all commits in the PR
-          COMMITS=$(git log $BASE_SHA..HEAD --pretty=format:"%H|%s")
+          # Get all commits in the PR (excluding merge commits)
+          COMMITS=$(git log $BASE_SHA..HEAD --no-merges --pretty=format:"%H|%s")
           
           if [ -z "$COMMITS" ]; then
             echo "⚠️  No commits found in this PR"
@@ -47,7 +47,7 @@ jobs:
           fi
           
           COMMIT_COUNT=$(echo "$COMMITS" | wc -l)
-          echo "Found $COMMIT_COUNT commit(s) to check"
+          echo "Found $COMMIT_COUNT commit(s) to check (excluding merge commits)"
           echo ""
           
           HAS_ERRORS=false
