@@ -38,7 +38,7 @@ jobs:
           # Debug: Show Jira configuration (mask sensitive data)
           echo "🔧 Configuration:"
           echo "   Jira URL: $JIRA_BASE_URL"
-          echo "   Jira Email: ${JIRA_EMAIL:0:3}***@***"
+          echo "   Jira Email: $JIRA_EMAIL"
           echo "   API Token: ${JIRA_API_TOKEN:0:4}****"
           echo ""
           
@@ -78,8 +78,7 @@ jobs:
             # Debug output
             echo "   🔍 DEBUG: Calling $url" >&2
             
-            response=$(curl -s -S -w "\n%{http_code}" --max-time 10 \
-              -H "Authorization: Basic $auth" \
+            response=$(curl -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" -s -S -w "\n%{http_code}" --max-time 10 \
               -H "Accept: application/json" \
               "$url" 2>&1)
             
