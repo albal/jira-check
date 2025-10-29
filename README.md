@@ -13,15 +13,35 @@ This GitHub Action validates that all commits in a Pull Request have valid Jira 
 
 ## Setup
 
-### 1. Configure GitHub Secrets
+### 1. Create Jira API Token
 
-Add the following secrets to your repository (Settings → Secrets and variables → Actions):
+1. Go to https://id.atlassian.com/manage-profile/security/api-tokens
+2. Click "Create API token"
+3. Give it a name (e.g., "GitHub PR Validation")
+4. **Required Scopes**: The token needs the following read-only permissions:
+   - `read:jira-work` - Read issues and project data
+   - `read:account` - Read account information
+   - `read:jira-user` - Read user information
+   - `read:me` - Read your own user details
+5. Copy the token (you won't be able to see it again)
 
-- `JIRA_BASE_URL`: Your Jira instance URL (e.g., `https://your-domain.atlassian.net`)
+> **Note**: These are read-only scopes - the action does not modify any Jira data.
+
+### 2. Configure GitHub Variables and Secrets
+
+Add the following to your repository (Settings → Secrets and variables → Actions):
+
+**Variables** (Settings → Secrets and variables → Actions → Variables tab):
+- `JIRA_BASE_URL`: Your Jira instance URL (e.g., `https://your-domain.atlassian.net` or just `your-domain.atlassian.net`)
+  - The action will automatically add `https://` if not provided
+  - Trailing slashes are automatically removed
 - `JIRA_EMAIL`: Email address for Jira API authentication
-- `JIRA_API_TOKEN`: Jira API token (create one at https://id.atlassian.com/manage-profile/security/api-tokens)
+- `ACTION_DEBUG` (optional): Set to `true` to enable debug logging (shows curl details, API responses, extracted status, etc.). Default is disabled (unset or `false`).
 
-### 2. Add the Workflow File
+**Secrets** (Settings → Secrets and variables → Actions → Secrets tab):
+- `JIRA_API_TOKEN`: Jira API token created above- `JIRA_API_TOKEN`: Jira API token created above
+
+### 3. Add the Workflow File
 
 The workflow file is already created at `.github/workflows/jira-ticket-check.yml`
 
@@ -151,8 +171,9 @@ tickets=$(echo "$commit_msg" | grep -oE '[A-Za-z]+-[0-9]+' | sort -u)
 - Check that the PR has commits
 
 ### "Jira credentials not configured"
-- Verify all three secrets are set: `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`
-- Ensure the secrets are available to the workflow
+- Verify the variable `JIRA_BASE_URL` and `JIRA_EMAIL` are set
+- Verify the secret `JIRA_API_TOKEN` is set
+- Ensure the variables and secret are available to the workflow
 
 ### "Failed to fetch Jira ticket"
 - Check the API token is valid and not expired

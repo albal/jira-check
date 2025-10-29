@@ -15,12 +15,30 @@ jobs:
 
       - name: Check Jira tickets in commits
         env:
-          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
-          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ vars.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          ACTION_DEBUG: ${{ vars.ACTION_DEBUG }}
         run: |
           #!/bin/bash
           set -e
+          
+          # Check if debug is enabled (any value except "false" or empty)
+          DEBUG_ENABLED=false
+          if [ -n "$ACTION_DEBUG" ] && [ "$ACTION_DEBUG" != "false" ] && [ "$ACTION_DEBUG" != "False" ] && [ "$ACTION_DEBUG" != "FALSE" ]; then
+            DEBUG_ENABLED=true
+            echo "🐛 Debug mode: ENABLED (ACTION_DEBUG='$ACTION_DEBUG')"
+          else
+            echo "🐛 Debug mode: DISABLED"
+          fi
+          echo ""
+          
+          # Debug output helper function
+          debug_log() {
+            if [ "$DEBUG_ENABLED" = true ]; then
+              echo "$@" >&2
+            fi
+          }
           
           echo "🔍 Checking Jira tickets in PR commits..."
           echo ""
@@ -35,11 +53,18 @@ jobs:
             exit 1
           fi
           
+          # Debug: Show Jira configuration (mask sensitive data)
+          echo "🔧 Configuration:"
+          echo "   Jira URL: $JIRA_BASE_URL"
+          echo "   Jira Email: $JIRA_EMAIL"
+          echo "   API Token: ${JIRA_API_TOKEN:0:4}****"
+          echo ""
+          
           # Get the base branch
           BASE_SHA=$(git merge-base origin/${{ github.base_ref }} HEAD)
           
-          # Get all commits in the PR
-          COMMITS=$(git log $BASE_SHA..HEAD --pretty=format:"%H|%s")
+          # Get all commits in the PR (excluding merge commits)
+          COMMITS=$(git log $BASE_SHA..HEAD --no-merges --pretty=format:"%H|%s")
           
           if [ -z "$COMMITS" ]; then
             echo "⚠️  No commits found in this PR"
@@ -47,30 +72,80 @@ jobs:
           fi
           
           COMMIT_COUNT=$(echo "$COMMITS" | wc -l)
-          echo "Found $COMMIT_COUNT commit(s) to check"
+          echo "Found $COMMIT_COUNT commit(s) to check (excluding merge commits)"
           echo ""
           
           HAS_ERRORS=false
           INVALID_COMMITS=()
           
+          # Associative array to cache ticket checks (ticket_id -> "http_code|status")
+          declare -A TICKET_CACHE
+          
           # Function to check Jira ticket status
           check_jira_ticket() {
             local ticket_id=$1
+            
+            # Check cache first
+            if [ -n "${TICKET_CACHE[$ticket_id]}" ]; then
+              debug_log "   🔍 DEBUG: Using cached result for $ticket_id"
+              echo "${TICKET_CACHE[$ticket_id]}"
+              return
+            fi
+            
+            debug_log "   🔍 DEBUG: Fetching $ticket_id from Jira API"
+            
             local auth=$(echo -n "$JIRA_EMAIL:$JIRA_API_TOKEN" | base64)
             
-            response=$(curl -s -w "\n%{http_code}" \
-              -H "Authorization: Basic $auth" \
+            # Remove trailing slash from JIRA_BASE_URL if present
+            local base_url="${JIRA_BASE_URL%/}"
+            
+            # Add https:// if no protocol is specified
+            if [[ ! "$base_url" =~ ^https?:// ]]; then
+              base_url="https://$base_url"
+            fi
+            
+            local url="$base_url/rest/api/3/issue/$ticket_id"
+            
+            # Debug output
+            debug_log "   🔍 DEBUG: Calling $url"
+            
+            response=$(curl -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" -s -S -w "\n%{http_code}" --max-time 10 \
               -H "Accept: application/json" \
-              "$JIRA_BASE_URL/rest/api/3/issue/$ticket_id")
+              "$url" 2>&1)
+            
+            curl_exit=$?
+            
+            # Debug: show curl exit code
+            debug_log "   🔍 DEBUG: curl exit code: $curl_exit"
             
             http_code=$(echo "$response" | tail -n1)
             body=$(echo "$response" | sed '$d')
             
+            debug_log "   🔍 DEBUG: HTTP code: $http_code"
+            
+            # Check if http_code is a valid number
+            if ! [[ "$http_code" =~ ^[0-9]+$ ]]; then
+              # If not a number, it's likely a curl error
+              debug_log "   🔍 DEBUG: Not a valid HTTP code, returning error"
+              echo "error|Connection failed: $response"
+              return
+            fi
+            
             if [ "$http_code" = "200" ]; then
-              status=$(echo "$body" | grep -o '"status":{[^}]*"name":"[^"]*"' | grep -o '"name":"[^"]*"' | cut -d'"' -f4)
-              echo "$http_code|$status"
+              # Extract status using jq (more reliable than grep)
+              status=$(echo "$body" | jq -r '.fields.status.name' 2>/dev/null)
+              debug_log "   🔍 DEBUG: Extracted status: '$status'"
+              
+              if [ -z "$status" ] || [ "$status" = "null" ]; then
+                debug_log "   🔍 DEBUG: Status is empty or null"
+                status=""
+              fi
+              
+              result="$http_code|$status"
+              echo "$result"
             else
-              echo "$http_code|"
+              result="$http_code|"
+              echo "$result"
             fi
           }
           
@@ -112,30 +187,52 @@ jobs:
               [ -z "$ticket" ] && continue
               
               result=$(check_jira_ticket "$ticket")
-              http_code=$(echo "$result" | cut -d'|' -f1)
-              status=$(echo "$result" | cut -d'|' -f2)
+              # Cache the result
+              TICKET_CACHE[$ticket]="$result"
               
-              if [ "$http_code" = "404" ]; then
+              http_code=$(echo "$result" | cut -d'|' -f1)
+              status=$(echo "$result" | cut -d'|' -f2-)
+              
+              if [ "$http_code" = "error" ]; then
+                echo "   ❌ Connection error: $status"
+                HAS_ERRORS=true
+                commit_valid=false
+                INVALID_COMMITS+=("$short_hash: Connection error checking ticket $ticket")
+              elif [ "$http_code" = "401" ]; then
+                echo "   ❌ Authentication failed for ticket $ticket"
+                echo "   ℹ️  Check your JIRA_EMAIL and JIRA_API_TOKEN"
+                HAS_ERRORS=true
+                commit_valid=false
+                INVALID_COMMITS+=("$short_hash: Authentication failed")
+              elif [ "$http_code" = "404" ]; then
                 echo "   ❌ Ticket $ticket does not exist"
                 HAS_ERRORS=true
                 commit_valid=false
                 INVALID_COMMITS+=("$short_hash: Ticket $ticket does not exist")
               elif [ "$http_code" = "200" ]; then
-                if is_valid_status "$status"; then
+                debug_log "   🔍 DEBUG: Checking status validity: '$status'"
+                if [ -z "$status" ]; then
+                  echo "   ❌ Could not extract status from Jira response"
+                  echo "   ℹ️  This might be a JSON parsing issue"
+                  HAS_ERRORS=true
+                  commit_valid=false
+                  INVALID_COMMITS+=("$short_hash: Could not parse status for ticket $ticket")
+                elif is_valid_status "$status"; then
                   echo "   ✅ Ticket $ticket is valid (Status: $status)"
-                  echo "   🔗 $JIRA_BASE_URL/browse/$ticket"
+                  echo "   🔗 ${JIRA_BASE_URL%/}/browse/$ticket"
                 else
                   echo "   ❌ Ticket $ticket has invalid status: $status"
-                  echo "   🔗 $JIRA_BASE_URL/browse/$ticket"
+                  echo "   🔗 ${JIRA_BASE_URL%/}/browse/$ticket"
                   HAS_ERRORS=true
                   commit_valid=false
                   INVALID_COMMITS+=("$short_hash: Ticket $ticket has invalid status: $status")
                 fi
               else
-                echo "   ❌ Error checking ticket $ticket: HTTP $http_code"
+                echo "   ❌ Unexpected HTTP response: $http_code"
+                echo "   ℹ️  Response body: $status"
                 HAS_ERRORS=true
                 commit_valid=false
-                INVALID_COMMITS+=("$short_hash: Error checking ticket $ticket")
+                INVALID_COMMITS+=("$short_hash: HTTP $http_code for ticket $ticket")
               fi
             done <<< "$tickets"
             
@@ -146,6 +243,10 @@ jobs:
           echo "============================================================"
           echo "📊 SUMMARY"
           echo "============================================================"
+          echo ""
+          
+          echo "Total commits checked: $COMMIT_COUNT"
+          echo "Unique Jira tickets checked: ${#TICKET_CACHE[@]}"
           echo ""
           
           if [ "$HAS_ERRORS" = true ]; then
